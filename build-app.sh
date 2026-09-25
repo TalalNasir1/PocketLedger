@@ -24,7 +24,9 @@ build_arch() {
     -framework SwiftUI \
     -framework AppKit \
     -framework Charts \
-    -framework UserNotifications
+    -framework UserNotifications \
+    -framework LocalAuthentication \
+    -framework Security
 }
 
 build_arch arm64

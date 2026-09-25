@@ -93,4 +93,16 @@ final class PocketLedgerTests: XCTestCase {
         XCTAssertNotNil(backup)
         XCTAssertTrue(FileManager.default.fileExists(atPath: backup!.path))
     }
+
+    func testPINValidationAndHashing() throws {
+        XCTAssertTrue(AppLockManager.isValidPIN("0427"))
+        XCTAssertFalse(AppLockManager.isValidPIN("427"))
+        XCTAssertFalse(AppLockManager.isValidPIN("12a4"))
+        XCTAssertFalse(AppLockManager.isValidPIN("12345"))
+
+        let credential = try PINCredential.create(for: "0427")
+        XCTAssertTrue(credential.matches("0427"))
+        XCTAssertFalse(credential.matches("0428"))
+        XCTAssertNotEqual(credential.digest, Data("0427".utf8))
+    }
 }

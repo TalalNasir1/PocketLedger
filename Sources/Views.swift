@@ -452,11 +452,197 @@ struct AssetsView: View {
     }
 }
 
+struct AppUnlockView: View {
+    @EnvironmentObject var appLock: AppLockManager
+    @State private var pin = ""
+    @State private var message = ""
+    @State private var attemptedBiometrics = false
+
+    var body: some View {
+        ZStack {
+            LinearGradient(
+                colors: [Color.blue.opacity(0.18), Color.purple.opacity(0.14)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .ignoresSafeArea()
+
+            VStack(spacing: 22) {
+                Image(systemName: "lock.shield.fill")
+                    .font(.system(size: 48, weight: .semibold))
+                    .foregroundStyle(.blue)
+                    .frame(width: 92, height: 92)
+                    .background(.blue.opacity(0.12), in: RoundedRectangle(cornerRadius: 24))
+
+                VStack(spacing: 7) {
+                    Text("Pocket Ledger is locked").font(.largeTitle.bold())
+                    Text("Enter your four-digit passcode or use \(appLock.biometryName).")
+                        .foregroundStyle(.secondary)
+                }
+
+                SecureField("4-digit passcode", text: $pin)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.title3.monospacedDigit())
+                    .frame(width: 240)
+                    .onSubmit(unlock)
+                    .onChange(of: pin) { _, newValue in
+                        pin = String(newValue.filter(\.isNumber).prefix(4))
+                        message = ""
+                    }
+
+                if !message.isEmpty {
+                    Text(message).font(.callout).foregroundStyle(.red)
+                }
+
+                HStack(spacing: 12) {
+                    Button("Unlock", action: unlock)
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.large)
+                        .disabled(!AppLockManager.isValidPIN(pin))
+
+                    if appLock.biometricsEnabled && appLock.canUseBiometrics {
+                        Button {
+                            Task { _ = await appLock.authenticateWithBiometrics() }
+                        } label: {
+                            Label("Use \(appLock.biometryName)", systemImage: "touchid")
+                        }
+                        .controlSize(.large)
+                    }
+                }
+
+                Text("Your financial records remain stored locally on this Mac.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            .padding(44)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 28))
+            .overlay(RoundedRectangle(cornerRadius: 28).stroke(.white.opacity(0.35)))
+            .shadow(color: .black.opacity(0.12), radius: 24, y: 12)
+        }
+        .task {
+            guard !attemptedBiometrics, appLock.biometricsEnabled, appLock.canUseBiometrics else { return }
+            attemptedBiometrics = true
+            _ = await appLock.authenticateWithBiometrics()
+        }
+    }
+
+    private func unlock() {
+        if appLock.unlock(with: pin) {
+            pin = ""
+        } else {
+            message = "Incorrect passcode. Please try again."
+            pin = ""
+        }
+    }
+}
+
+enum PasscodeAction: String, Identifiable {
+    case setup
+    case change
+    case remove
+    var id: String { rawValue }
+}
+
+struct PasscodeEditorSheet: View {
+    @EnvironmentObject var appLock: AppLockManager
+    @Environment(\.dismiss) var dismiss
+    let action: PasscodeAction
+    @State private var currentPIN = ""
+    @State private var newPIN = ""
+    @State private var confirmation = ""
+    @State private var errorMessage = ""
+
+    private var title: String {
+        switch action {
+        case .setup: return "Set app passcode"
+        case .change: return "Change app passcode"
+        case .remove: return "Remove app passcode"
+        }
+    }
+
+    private var canContinue: Bool {
+        switch action {
+        case .setup:
+            return AppLockManager.isValidPIN(newPIN) && AppLockManager.isValidPIN(confirmation)
+        case .change:
+            return AppLockManager.isValidPIN(currentPIN) && AppLockManager.isValidPIN(newPIN) && AppLockManager.isValidPIN(confirmation)
+        case .remove:
+            return AppLockManager.isValidPIN(currentPIN)
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title).font(.title2.bold())
+                    Text(action == .remove ? "This will stop Pocket Ledger from asking for a passcode." : "Use exactly four digits that you can remember.")
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+            .padding(22)
+            Divider()
+
+            Form {
+                if action == .change || action == .remove {
+                    SecureField("Current passcode", text: $currentPIN)
+                        .onChange(of: currentPIN) { _, value in currentPIN = sanitized(value) }
+                }
+                if action == .setup || action == .change {
+                    SecureField("New four-digit passcode", text: $newPIN)
+                        .onChange(of: newPIN) { _, value in newPIN = sanitized(value) }
+                    SecureField("Confirm new passcode", text: $confirmation)
+                        .onChange(of: confirmation) { _, value in confirmation = sanitized(value) }
+                }
+                if !errorMessage.isEmpty {
+                    Text(errorMessage).foregroundStyle(.red)
+                }
+            }
+            .padding(22)
+
+            Divider()
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button(action == .remove ? "Remove passcode" : "Save passcode", action: save)
+                    .buttonStyle(.borderedProminent)
+                    .tint(action == .remove ? .red : .accentColor)
+                    .disabled(!canContinue)
+                    .keyboardShortcut(.defaultAction)
+            }
+            .padding(18)
+        }
+        .frame(width: 520)
+    }
+
+    private func sanitized(_ value: String) -> String {
+        String(value.filter(\.isNumber).prefix(4))
+    }
+
+    private func save() {
+        do {
+            switch action {
+            case .setup:
+                try appLock.setPasscode(newPIN, confirmation: confirmation)
+            case .change:
+                try appLock.changePasscode(current: currentPIN, new: newPIN, confirmation: confirmation)
+            case .remove:
+                try appLock.removePasscode(current: currentPIN)
+            }
+            dismiss()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+}
+
 struct SettingsView: View {
     @EnvironmentObject var store: LedgerStore
+    @EnvironmentObject var appLock: AppLockManager
     @State private var settings = LedgerSettings()
     @State private var notificationText = "Checking…"
     @State private var confirmation = ""
+    @State private var passcodeAction: PasscodeAction?
 
     var body: some View {
         ScrollView {
@@ -489,6 +675,41 @@ struct SettingsView: View {
                                 notificationText = granted ? "Enabled. Upcoming reminders are scheduled locally." : "Not enabled. You can allow notifications in System Settings."
                                 if granted { NotificationManager.shared.reschedule(from: store.data) }
                             }
+                        }
+                    }
+                    .padding(8)
+                }
+
+                GroupBox("App lock") {
+                    VStack(alignment: .leading, spacing: 14) {
+                        HStack {
+                            Image(systemName: appLock.hasPasscode ? "lock.shield.fill" : "lock.open.fill")
+                                .font(.title2)
+                                .foregroundStyle(appLock.hasPasscode ? .green : .secondary)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(appLock.hasPasscode ? "Four-digit passcode is enabled" : "App lock is not enabled")
+                                    .font(.headline)
+                                Text(appLock.hasPasscode ? "Pocket Ledger locks on launch and when you switch away." : "Add a passcode to prevent casual access to your records.")
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                        }
+
+                        if appLock.hasPasscode {
+                            Toggle("Unlock with \(appLock.biometryName)", isOn: $appLock.biometricsEnabled)
+                                .disabled(!appLock.canUseBiometrics)
+                            if !appLock.canUseBiometrics {
+                                Text("Touch ID is not available or has not been configured in macOS System Settings.")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                            HStack {
+                                Button("Change passcode") { passcodeAction = .change }
+                                Button("Lock now") { appLock.lock() }
+                                Button("Remove passcode", role: .destructive) { passcodeAction = .remove }
+                            }
+                        } else {
+                            Button("Set four-digit passcode") { passcodeAction = .setup }
+                                .buttonStyle(.borderedProminent)
                         }
                     }
                     .padding(8)
@@ -530,6 +751,10 @@ struct SettingsView: View {
                 @unknown default: notificationText = "Notification status is unavailable."
                 }
             }
+        }
+        .sheet(item: $passcodeAction) { action in
+            PasscodeEditorSheet(action: action)
+                .environmentObject(appLock)
         }
     }
 

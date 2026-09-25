@@ -15,7 +15,9 @@ let package = Package(
                 .linkedFramework("SwiftUI"),
                 .linkedFramework("AppKit"),
                 .linkedFramework("Charts"),
-                .linkedFramework("UserNotifications")
+                .linkedFramework("UserNotifications"),
+                .linkedFramework("LocalAuthentication"),
+                .linkedFramework("Security")
             ]
         ),
         .testTarget(

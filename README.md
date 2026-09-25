@@ -12,6 +12,7 @@ Pocket Ledger is a private, offline personal finance app for macOS. It tracks su
 - Salary, pocket money, freelance income, gifts, and other money received
 - Cash, bank, savings, investment, property, and other asset balances
 - Automatic balance updates when income or expenses are linked to an account
+- Optional four-digit app lock with secure Keychain storage and Touch ID unlock
 - Immediate local saving, up to 30 automatic backups, manual backup/restore, and CSV export
 - No login, server, analytics, advertisements, or internet connection
 

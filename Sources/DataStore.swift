@@ -65,6 +65,10 @@ final class LedgerStore: ObservableObject {
             .reduce(0) { $0 + $1.amount }
     }
 
+    func totalSpent(on subscription: SubscriptionEntry) -> Double {
+        data.expenses.filter { $0.subscriptionID == subscription.id }.reduce(0) { $0 + $1.amount }
+    }
+
     func addAsset(_ asset: AssetAccount) {
         data.assets.append(asset)
         persist()

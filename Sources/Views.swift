@@ -233,7 +233,7 @@ struct SubscriptionsView: View {
         VStack(spacing: 0) {
             PageHeader(title: "Subscriptions", subtitle: "Track recurring payments and upcoming due dates", actionTitle: "Add subscription") {
                 isNew = true
-                presented = SubscriptionEntry(name: "", amount: 0, cycle: .monthly, nextDueDate: Date())
+                presented = SubscriptionEntry(name: "", amount: 0, cycle: .monthly, nextDueDate: Date(), assetID: store.data.assets.first?.id)
             }
             .padding(28)
 
@@ -256,7 +256,8 @@ struct SubscriptionsView: View {
                             Spacer()
                             VStack(alignment: .trailing, spacing: 4) {
                                 Text(store.currency(subscription.amount)).font(.headline)
-                                Text("\(subscription.reminderDays) day reminder").font(.caption).foregroundStyle(.secondary)
+                                Text("\(subscription.reminderDays) day reminder • \(store.currency(store.totalSpent(on: subscription))) spent")
+                                    .font(.caption).foregroundStyle(.secondary)
                             }
                             Button("Record paid") { store.recordSubscriptionPayment(subscription) }
                                 .disabled(!subscription.isActive)
@@ -302,7 +303,7 @@ struct ExpensesView: View {
         VStack(spacing: 0) {
             PageHeader(title: "Expenses", subtitle: "Everyday spending automatically reduces the selected balance", actionTitle: "Add expense") {
                 isNew = true
-                presented = ExpenseEntry(title: "", amount: 0, date: Date(), category: "Food")
+                presented = ExpenseEntry(title: "", amount: 0, date: Date(), category: "Food", assetID: store.data.assets.first?.id)
             }
             .padding(28)
             if store.data.expenses.isEmpty {
@@ -336,7 +337,7 @@ struct IncomeView: View {
         VStack(spacing: 0) {
             PageHeader(title: "Income", subtitle: "Salary, pocket money, gifts, and other money received", actionTitle: "Add income") {
                 isNew = true
-                presented = IncomeEntry(source: "", amount: 0, date: Date(), category: "Salary")
+                presented = IncomeEntry(source: "", amount: 0, date: Date(), category: "Salary", assetID: store.data.assets.first?.id)
             }
             .padding(28)
             if store.data.income.isEmpty {

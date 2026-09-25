@@ -62,6 +62,7 @@ final class PocketLedgerTests: XCTestCase {
 
         XCTAssertEqual(store.data.expenses.count, 1)
         XCTAssertEqual(store.data.expenses.first?.subscriptionID, subscription.id)
+        XCTAssertEqual(store.totalSpent(on: subscription), 50)
         XCTAssertEqual(store.data.assets.first?.balance, 950)
         XCTAssertGreaterThan(store.data.subscriptions.first!.nextDueDate, Date())
     }

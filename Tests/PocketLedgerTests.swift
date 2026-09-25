@@ -68,6 +68,68 @@ final class PocketLedgerTests: XCTestCase {
     }
 
     @MainActor
+    func testSubscriptionPaymentAcceptsDifferentChargedAmount() {
+        let store = makeStore()
+        let bank = AssetAccount(name: "Bank", kind: .bank, balance: 1_000)
+        store.addAsset(bank)
+        let subscription = SubscriptionEntry(
+            name: "Streaming",
+            amount: 10,
+            cycle: .monthly,
+            nextDueDate: Date(),
+            assetID: bank.id
+        )
+        store.addSubscription(subscription)
+
+        store.recordSubscriptionPayment(subscription, amount: 12.75)
+
+        XCTAssertEqual(store.data.expenses.first?.amount, 12.75)
+        XCTAssertEqual(store.totalSpent(on: subscription), 12.75)
+        XCTAssertEqual(store.data.assets.first?.balance, 987.25)
+    }
+
+    @MainActor
+    func testTransferMovesBalanceWithoutCreatingIncomeOrExpense() {
+        let store = makeStore()
+        let wallet = AssetAccount(name: "Wallet", kind: .cash, balance: 300)
+        let bank = AssetAccount(name: "Bank", kind: .bank, balance: 500)
+        store.addAsset(wallet)
+        store.addAsset(bank)
+
+        let transfer = AssetTransfer(
+            amount: 125,
+            date: Date(),
+            fromAssetID: wallet.id,
+            toAssetID: bank.id,
+            notes: "Deposit"
+        )
+        XCTAssertTrue(store.addTransfer(transfer))
+        XCTAssertEqual(store.data.assets.first(where: { $0.id == wallet.id })?.balance, 175)
+        XCTAssertEqual(store.data.assets.first(where: { $0.id == bank.id })?.balance, 625)
+        XCTAssertTrue(store.data.expenses.isEmpty)
+        XCTAssertTrue(store.data.income.isEmpty)
+        XCTAssertEqual(store.totalAssets, 800)
+
+        store.deleteTransfer(transfer)
+        XCTAssertEqual(store.data.assets.first(where: { $0.id == wallet.id })?.balance, 300)
+        XCTAssertEqual(store.data.assets.first(where: { $0.id == bank.id })?.balance, 500)
+    }
+
+    func testOlderLedgerDataLoadsWithoutTransferField() throws {
+        let json = """
+        {
+          "assets": [],
+          "expenses": [],
+          "income": [],
+          "subscriptions": [],
+          "settings": {"currencyCode": "USD", "reminderHour": 9}
+        }
+        """
+        let decoded = try JSONDecoder().decode(LedgerData.self, from: Data(json.utf8))
+        XCTAssertTrue(decoded.transfers.isEmpty)
+    }
+
+    @MainActor
     func testDataPersistsAcrossRelaunch() {
         var store = makeStore()
         store.addAsset(AssetAccount(name: "Savings", kind: .savings, balance: 2_500))

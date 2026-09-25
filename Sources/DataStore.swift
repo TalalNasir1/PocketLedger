@@ -87,6 +87,7 @@ final class LedgerStore: ObservableObject {
         for index in data.expenses.indices where data.expenses[index].assetID == asset.id { data.expenses[index].assetID = nil }
         for index in data.income.indices where data.income[index].assetID == asset.id { data.income[index].assetID = nil }
         for index in data.subscriptions.indices where data.subscriptions[index].assetID == asset.id { data.subscriptions[index].assetID = nil }
+        data.transfers.removeAll { $0.fromAssetID == asset.id || $0.toAssetID == asset.id }
         persist()
     }
 
@@ -151,11 +152,12 @@ final class LedgerStore: ObservableObject {
         refreshNotifications()
     }
 
-    func recordSubscriptionPayment(_ subscription: SubscriptionEntry) {
+    func recordSubscriptionPayment(_ subscription: SubscriptionEntry, amount: Double, date: Date = Date()) {
+        guard amount > 0 else { return }
         let expense = ExpenseEntry(
             title: subscription.name,
-            amount: subscription.amount,
-            date: Date(),
+            amount: amount,
+            date: date,
             category: "Subscriptions",
             paymentMethod: "Recurring payment",
             assetID: subscription.assetID,
@@ -165,10 +167,35 @@ final class LedgerStore: ObservableObject {
         addExpense(expense)
         guard let index = data.subscriptions.firstIndex(where: { $0.id == subscription.id }) else { return }
         var next = data.subscriptions[index].nextDueDate
-        repeat { next = subscription.dateAfter(next) } while next <= Date()
+        repeat { next = subscription.dateAfter(next) } while next <= date
         data.subscriptions[index].nextDueDate = next
         persist()
         refreshNotifications()
+    }
+
+    func recordSubscriptionPayment(_ subscription: SubscriptionEntry) {
+        recordSubscriptionPayment(subscription, amount: subscription.amount)
+    }
+
+    @discardableResult
+    func addTransfer(_ transfer: AssetTransfer) -> Bool {
+        guard transfer.amount > 0,
+              transfer.fromAssetID != transfer.toAssetID,
+              data.assets.contains(where: { $0.id == transfer.fromAssetID }),
+              data.assets.contains(where: { $0.id == transfer.toAssetID }) else { return false }
+        data.transfers.append(transfer)
+        changeAsset(transfer.fromAssetID, by: -transfer.amount)
+        changeAsset(transfer.toAssetID, by: transfer.amount)
+        persist()
+        return true
+    }
+
+    func deleteTransfer(_ transfer: AssetTransfer) {
+        guard data.transfers.contains(where: { $0.id == transfer.id }) else { return }
+        changeAsset(transfer.fromAssetID, by: transfer.amount)
+        changeAsset(transfer.toAssetID, by: -transfer.amount)
+        data.transfers.removeAll { $0.id == transfer.id }
+        persist()
     }
 
     func updateSettings(_ settings: LedgerSettings) {
@@ -282,6 +309,13 @@ final class LedgerStore: ObservableObject {
                     .map(csvEscape).joined(separator: ",")
             }.joined(separator: "\n")
             try (incomeHeader + incomeRows).write(to: folder.appendingPathComponent("income.csv"), atomically: true, encoding: .utf8)
+
+            let transferHeader = "Date,From,To,Amount,Notes\n"
+            let transferRows = data.transfers.sorted { $0.date < $1.date }.map {
+                [dateString($0.date), assetName(for: $0.fromAssetID), assetName(for: $0.toAssetID), String($0.amount), $0.notes]
+                    .map(csvEscape).joined(separator: ",")
+            }.joined(separator: "\n")
+            try (transferHeader + transferRows).write(to: folder.appendingPathComponent("transfers.csv"), atomically: true, encoding: .utf8)
         } catch {
             lastError = "CSV files could not be exported: \(error.localizedDescription)"
         }

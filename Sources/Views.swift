@@ -55,6 +55,9 @@ struct ContentView: View {
 struct PageHeader: View {
     let title: String
     let subtitle: String
+    var secondaryActionTitle: String?
+    var secondaryActionIcon = "arrow.left.arrow.right"
+    var secondaryAction: (() -> Void)?
     var actionTitle: String?
     var action: (() -> Void)?
 
@@ -65,6 +68,13 @@ struct PageHeader: View {
                 Text(subtitle).foregroundStyle(.secondary)
             }
             Spacer()
+            if let secondaryActionTitle, let secondaryAction {
+                Button(action: secondaryAction) {
+                    Label(secondaryActionTitle, systemImage: secondaryActionIcon)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+            }
             if let actionTitle, let action {
                 Button(action: action) { Label(actionTitle, systemImage: "plus") }
                     .buttonStyle(.borderedProminent)
@@ -80,6 +90,8 @@ struct StatCard: View {
     let subtitle: String
     let icon: String
     let color: Color
+    var privacyHidden = false
+    var privacyAction: (() -> Void)?
 
     var body: some View {
         HStack(spacing: 14) {
@@ -90,7 +102,22 @@ struct StatCard: View {
                 .background(color.opacity(0.13), in: RoundedRectangle(cornerRadius: 12))
             VStack(alignment: .leading, spacing: 3) {
                 Text(title).font(.caption).foregroundStyle(.secondary)
-                Text(value).font(.title2.bold()).lineLimit(1).minimumScaleFactor(0.7)
+                HStack(spacing: 7) {
+                    Text(privacyHidden ? "••••••" : value)
+                        .font(.title2.bold())
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                        .accessibilityLabel(privacyHidden ? "Amount hidden" : value)
+                    if let privacyAction {
+                        Button(action: privacyAction) {
+                            Image(systemName: privacyHidden ? "eye" : "eye.slash")
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                        .help(privacyHidden ? "Show total assets" : "Hide total assets")
+                        .accessibilityLabel(privacyHidden ? "Show total assets" : "Hide total assets")
+                    }
+                }
                 Text(subtitle).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
             }
             Spacer(minLength: 0)
@@ -103,7 +130,7 @@ struct StatCard: View {
 
 struct SpendingPoint: Identifiable {
     let id = UUID()
-    let month: Date
+    let date: Date
     let amount: Double
 }
 
@@ -113,23 +140,44 @@ struct CategoryPoint: Identifiable {
     var id: String { category }
 }
 
+enum DashboardPeriod: String, CaseIterable, Identifiable {
+    case month = "Monthly"
+    case year = "Yearly"
+    var id: String { rawValue }
+}
+
+enum TransactionPeriod: String, CaseIterable, Identifiable {
+    case month = "Month"
+    case year = "Year"
+    case all = "All"
+    var id: String { rawValue }
+}
+
 struct DashboardView: View {
     @EnvironmentObject var store: LedgerStore
+    @State private var hideTotalAssets = true
+    @State private var trendPeriod: DashboardPeriod = .month
+    @State private var categoryPeriod: DashboardPeriod = .month
+    @State private var hoveredCategory: CategoryPoint?
 
-    private var sixMonthSpending: [SpendingPoint] {
+    private var trendSpending: [SpendingPoint] {
         let calendar = Calendar.current
-        return (0..<6).reversed().compactMap { offset in
-            guard let month = calendar.date(byAdding: .month, value: -offset, to: Date()) else { return nil }
+        let component: Calendar.Component = trendPeriod == .month ? .month : .year
+        let count = trendPeriod == .month ? 6 : 5
+        return (0..<count).reversed().compactMap { offset in
+            guard let date = calendar.date(byAdding: component, value: -offset, to: Date()) else { return nil }
             let total = store.data.expenses.filter {
-                calendar.isDate($0.date, equalTo: month, toGranularity: .month)
+                calendar.isDate($0.date, equalTo: date, toGranularity: component)
             }.reduce(0) { $0 + $1.amount }
-            return SpendingPoint(month: month, amount: total)
+            return SpendingPoint(date: date, amount: total)
         }
     }
 
     private var categorySpending: [CategoryPoint] {
         let grouped = Dictionary(grouping: store.data.expenses.filter {
-            $0.date >= Date().startOfMonth && $0.date <= Date().endOfMonth
+            categoryPeriod == .month
+                ? ($0.date >= Date().startOfMonth && $0.date <= Date().endOfMonth)
+                : ($0.date >= Date().startOfYear && $0.date <= Date().endOfYear)
         }, by: \.category)
         return grouped.map { CategoryPoint(category: $0.key, amount: $0.value.reduce(0) { $0 + $1.amount }) }
             .sorted { $0.amount > $1.amount }
@@ -145,7 +193,15 @@ struct DashboardView: View {
                 PageHeader(title: "Your money", subtitle: "A private overview stored only on this Mac")
 
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 14) {
-                    StatCard(title: "Current assets", value: store.currency(store.totalAssets), subtitle: "Across included balances", icon: "wallet.bifold.fill", color: .blue)
+                    StatCard(
+                        title: "Current assets",
+                        value: store.currency(store.totalAssets),
+                        subtitle: "Across included balances",
+                        icon: "wallet.bifold.fill",
+                        color: .blue,
+                        privacyHidden: hideTotalAssets,
+                        privacyAction: { hideTotalAssets.toggle() }
+                    )
                     StatCard(title: "Spent this month", value: store.currency(store.thisMonthExpenses), subtitle: "All recorded expenses", icon: "arrow.up.right", color: .orange)
                     StatCard(title: "Income this month", value: store.currency(store.thisMonthIncome), subtitle: "Salary, pocket money & more", icon: "arrow.down.left", color: .green)
                     StatCard(title: "Monthly subscriptions", value: store.currency(store.monthlySubscriptionCost), subtitle: "Estimated recurring cost", icon: "repeat", color: .purple)
@@ -154,34 +210,91 @@ struct DashboardView: View {
                 }
 
                 HStack(alignment: .top, spacing: 16) {
-                    GroupBox("Spending over six months") {
-                        if store.data.expenses.isEmpty {
-                            EmptyChart(message: "Your spending chart will appear here")
-                        } else {
-                            Chart(sixMonthSpending) { point in
-                                BarMark(x: .value("Month", point.month, unit: .month), y: .value("Spent", point.amount))
+                    GroupBox {
+                        VStack(spacing: 8) {
+                            Picker("Chart period", selection: $trendPeriod) {
+                                ForEach(DashboardPeriod.allCases) { Text($0.rawValue).tag($0) }
+                            }
+                            .pickerStyle(.segmented)
+                            .labelsHidden()
+                            .frame(maxWidth: 220)
+                            if store.data.expenses.isEmpty {
+                                EmptyChart(message: "Your spending chart will appear here")
+                            } else {
+                                Chart(trendSpending) { point in
+                                    BarMark(
+                                        x: .value(trendPeriod == .month ? "Month" : "Year", point.date, unit: trendPeriod == .month ? .month : .year),
+                                        y: .value("Spent", point.amount)
+                                    )
                                     .foregroundStyle(.blue.gradient)
                                     .cornerRadius(5)
+                                }
+                                .chartYAxis { AxisMarks(position: .leading) }
+                                .frame(height: 220)
+                                .padding(.top, 4)
                             }
-                            .chartYAxis { AxisMarks(position: .leading) }
-                            .frame(height: 220)
-                            .padding(.top, 8)
                         }
+                    } label: {
+                        Text(trendPeriod == .month ? "Spending over six months" : "Spending over five years")
                     }
                     .frame(maxWidth: .infinity)
 
-                    GroupBox("This month by category") {
-                        if categorySpending.isEmpty {
-                            EmptyChart(message: "Add an expense to see categories")
-                        } else {
-                            Chart(categorySpending) { point in
-                                SectorMark(angle: .value("Amount", point.amount), innerRadius: .ratio(0.58), angularInset: 2)
-                                    .foregroundStyle(by: .value("Category", point.category))
+                    GroupBox {
+                        VStack(spacing: 8) {
+                            Picker("Category period", selection: $categoryPeriod) {
+                                ForEach(DashboardPeriod.allCases) { Text($0.rawValue).tag($0) }
                             }
-                            .chartLegend(position: .bottom, spacing: 8)
-                            .frame(height: 220)
-                            .padding(.top, 8)
+                            .pickerStyle(.segmented)
+                            .labelsHidden()
+                            .frame(maxWidth: 220)
+                            .onChange(of: categoryPeriod) { _, _ in hoveredCategory = nil }
+                            if categorySpending.isEmpty {
+                                EmptyChart(message: "Add an expense to see categories")
+                            } else {
+                                ZStack {
+                                    Chart(categorySpending) { point in
+                                        SectorMark(
+                                            angle: .value("Amount", point.amount),
+                                            innerRadius: .ratio(0.58),
+                                            angularInset: 2
+                                        )
+                                        .foregroundStyle(by: .value("Category", point.category))
+                                        .opacity(hoveredCategory == nil || hoveredCategory?.id == point.id ? 1 : 0.42)
+                                    }
+                                    .chartLegend(position: .bottom, spacing: 8)
+                                    .chartOverlay { proxy in
+                                        GeometryReader { geometry in
+                                            Rectangle()
+                                                .fill(.clear)
+                                                .contentShape(Rectangle())
+                                                .onContinuousHover { phase in
+                                                    switch phase {
+                                                    case .active(let location):
+                                                        hoveredCategory = category(at: location, proxy: proxy, geometry: geometry)
+                                                    case .ended:
+                                                        hoveredCategory = nil
+                                                    }
+                                                }
+                                        }
+                                    }
+                                    .frame(height: 220)
+
+                                    VStack(spacing: 2) {
+                                        Text(hoveredCategory?.category ?? "Total")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                        Text(store.currency(hoveredCategory?.amount ?? categorySpending.reduce(0) { $0 + $1.amount }))
+                                            .font(.headline)
+                                    }
+                                    .allowsHitTesting(false)
+                                }
+                                Text("Hover over a slice to see its category total.")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
                         }
+                    } label: {
+                        Text(categoryPeriod == .month ? "This month by category" : "This year by category")
                     }
                     .frame(maxWidth: .infinity)
                 }
@@ -211,6 +324,29 @@ struct DashboardView: View {
             .padding(28)
         }
     }
+
+    private func category(at location: CGPoint, proxy: ChartProxy, geometry: GeometryProxy) -> CategoryPoint? {
+        guard let plotFrame = proxy.plotFrame else { return nil }
+        let frame = geometry[plotFrame]
+        let center = CGPoint(x: frame.midX, y: frame.midY)
+        let dx = location.x - center.x
+        let dy = location.y - center.y
+        let distance = hypot(dx, dy)
+        let outerRadius = min(frame.width, frame.height) / 2
+        guard distance <= outerRadius, distance >= outerRadius * 0.45 else { return nil }
+
+        var angle = atan2(dx, -dy)
+        if angle < 0 { angle += 2 * .pi }
+        let total = categorySpending.reduce(0) { $0 + $1.amount }
+        guard total > 0 else { return nil }
+        let target = angle / (2 * .pi) * total
+        var running = 0.0
+        for point in categorySpending {
+            running += point.amount
+            if target <= running { return point }
+        }
+        return categorySpending.last
+    }
 }
 
 struct EmptyChart: View {
@@ -227,6 +363,7 @@ struct EmptyChart: View {
 struct SubscriptionsView: View {
     @EnvironmentObject var store: LedgerStore
     @State private var presented: SubscriptionEntry?
+    @State private var paymentSubscription: SubscriptionEntry?
     @State private var isNew = false
 
     var body: some View {
@@ -252,6 +389,14 @@ struct SubscriptionsView: View {
                                 }
                                 Text("Due \(subscription.nextDueDate.formatted(date: .abbreviated, time: .omitted)) • \(subscription.cycle.rawValue) • \(store.assetName(for: subscription.assetID))")
                                     .font(.caption).foregroundStyle(.secondary)
+                                if let trialEnd = subscription.trialEndDate {
+                                    Label(
+                                        "Free trial ends \(trialEnd.formatted(date: .abbreviated, time: .omitted))",
+                                        systemImage: "hourglass"
+                                    )
+                                    .font(.caption)
+                                    .foregroundStyle(.orange)
+                                }
                             }
                             Spacer()
                             VStack(alignment: .trailing, spacing: 4) {
@@ -259,7 +404,7 @@ struct SubscriptionsView: View {
                                 Text("\(subscription.reminderDays) day reminder • \(store.currency(store.totalSpent(on: subscription))) spent")
                                     .font(.caption).foregroundStyle(.secondary)
                             }
-                            Button("Record paid") { store.recordSubscriptionPayment(subscription) }
+                            Button("Record paid") { paymentSubscription = subscription }
                                 .disabled(!subscription.isActive)
                             Menu {
                                 Button("Edit") { isNew = false; presented = subscription }
@@ -284,6 +429,12 @@ struct SubscriptionsView: View {
                 presented = nil
             }
         }
+        .sheet(item: $paymentSubscription) { subscription in
+            SubscriptionPaymentSheet(subscription: subscription) { amount in
+                store.recordSubscriptionPayment(subscription, amount: amount)
+                paymentSubscription = nil
+            }
+        }
     }
 }
 
@@ -292,22 +443,42 @@ struct ExpensesView: View {
     @State private var presented: ExpenseEntry?
     @State private var isNew = false
     @State private var search = ""
+    @State private var period: TransactionPeriod = .month
+    @State private var referenceDate = Date()
+    @State private var showingTransfer = false
 
     private var filtered: [ExpenseEntry] {
         store.data.expenses.filter {
-            search.isEmpty || $0.title.localizedCaseInsensitiveContains(search) || $0.category.localizedCaseInsensitiveContains(search)
+            matches($0.date) &&
+            (search.isEmpty || $0.title.localizedCaseInsensitiveContains(search) || $0.category.localizedCaseInsensitiveContains(search))
         }.sorted { $0.date > $1.date }
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            PageHeader(title: "Expenses", subtitle: "Everyday spending automatically reduces the selected balance", actionTitle: "Add expense") {
+            PageHeader(
+                title: "Expenses",
+                subtitle: "Everyday spending automatically reduces the selected balance",
+                secondaryActionTitle: "Transfer money",
+                secondaryAction: { showingTransfer = true },
+                actionTitle: "Add expense"
+            ) {
                 isNew = true
                 presented = ExpenseEntry(title: "", amount: 0, date: Date(), category: "Food", assetID: store.data.assets.first?.id)
             }
             .padding(28)
+            PeriodFilterBar(
+                period: $period,
+                referenceDate: $referenceDate,
+                totalLabel: "Expenses",
+                total: store.currency(filtered.reduce(0) { $0 + $1.amount })
+            )
+            .padding(.horizontal, 28)
+            .padding(.bottom, 14)
             if store.data.expenses.isEmpty {
                 EmptyState(icon: "cart.badge.plus", title: "No expenses recorded", message: "Add food, shopping, transport, bills, or any other spending.")
+            } else if filtered.isEmpty {
+                EmptyState(icon: "calendar", title: "No expenses in this period", message: "Choose another month or year, or add a new expense.")
             } else {
                 List {
                     ForEach(filtered) { expense in
@@ -325,6 +496,20 @@ struct ExpensesView: View {
                 presented = nil
             }
         }
+        .sheet(isPresented: $showingTransfer) {
+            TransferEditor { transfer in
+                _ = store.addTransfer(transfer)
+                showingTransfer = false
+            }
+        }
+    }
+
+    private func matches(_ date: Date) -> Bool {
+        switch period {
+        case .month: return Calendar.current.isDate(date, equalTo: referenceDate, toGranularity: .month)
+        case .year: return Calendar.current.isDate(date, equalTo: referenceDate, toGranularity: .year)
+        case .all: return true
+        }
     }
 }
 
@@ -332,6 +517,12 @@ struct IncomeView: View {
     @EnvironmentObject var store: LedgerStore
     @State private var presented: IncomeEntry?
     @State private var isNew = false
+    @State private var period: TransactionPeriod = .month
+    @State private var referenceDate = Date()
+
+    private var filtered: [IncomeEntry] {
+        store.data.income.filter { matches($0.date) }.sorted { $0.date > $1.date }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -340,11 +531,21 @@ struct IncomeView: View {
                 presented = IncomeEntry(source: "", amount: 0, date: Date(), category: "Salary", assetID: store.data.assets.first?.id)
             }
             .padding(28)
+            PeriodFilterBar(
+                period: $period,
+                referenceDate: $referenceDate,
+                totalLabel: "Income",
+                total: store.currency(filtered.reduce(0) { $0 + $1.amount })
+            )
+            .padding(.horizontal, 28)
+            .padding(.bottom, 14)
             if store.data.income.isEmpty {
                 EmptyState(icon: "banknote.fill", title: "No income recorded", message: "Add salary or pocket money and choose which balance receives it.")
+            } else if filtered.isEmpty {
+                EmptyState(icon: "calendar", title: "No income in this period", message: "Choose another month or year, or add new income.")
             } else {
                 List {
-                    ForEach(store.data.income.sorted { $0.date > $1.date }) { income in
+                    ForEach(filtered) { income in
                         TransactionRow(icon: "arrow.down.left", color: .green, title: income.source, subtitle: "\(income.category) • \(income.date.formatted(date: .abbreviated, time: .omitted)) • \(store.assetName(for: income.assetID))", amount: "+\(store.currency(income.amount))") {
                             isNew = false; presented = income
                         } delete: { store.deleteIncome(income) }
@@ -358,6 +559,64 @@ struct IncomeView: View {
                 presented = nil
             }
         }
+    }
+
+    private func matches(_ date: Date) -> Bool {
+        switch period {
+        case .month: return Calendar.current.isDate(date, equalTo: referenceDate, toGranularity: .month)
+        case .year: return Calendar.current.isDate(date, equalTo: referenceDate, toGranularity: .year)
+        case .all: return true
+        }
+    }
+}
+
+struct PeriodFilterBar: View {
+    @Binding var period: TransactionPeriod
+    @Binding var referenceDate: Date
+    let totalLabel: String
+    let total: String
+
+    private var periodTitle: String {
+        switch period {
+        case .month: return referenceDate.formatted(.dateTime.month(.wide).year())
+        case .year: return referenceDate.formatted(.dateTime.year())
+        case .all: return "All time"
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 14) {
+            Picker("Period", selection: $period) {
+                ForEach(TransactionPeriod.allCases) { Text($0.rawValue).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 230)
+
+            if period != .all {
+                HStack(spacing: 6) {
+                    Button { move(-1) } label: { Image(systemName: "chevron.left") }
+                        .buttonStyle(.borderless)
+                        .help("Previous \(period.rawValue.lowercased())")
+                    Text(periodTitle).fontWeight(.semibold).frame(minWidth: 125)
+                    Button { move(1) } label: { Image(systemName: "chevron.right") }
+                        .buttonStyle(.borderless)
+                        .help("Next \(period.rawValue.lowercased())")
+                }
+            } else {
+                Text(periodTitle).fontWeight(.semibold).frame(minWidth: 125)
+            }
+            Spacer()
+            Text("\(totalLabel):").foregroundStyle(.secondary)
+            Text(total).font(.headline)
+        }
+        .padding(12)
+        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
+        .onChange(of: period) { _, _ in referenceDate = Date() }
+    }
+
+    private func move(_ value: Int) {
+        let component: Calendar.Component = period == .year ? .year : .month
+        referenceDate = Calendar.current.date(byAdding: component, value: value, to: referenceDate) ?? referenceDate
     }
 }
 
@@ -394,11 +653,18 @@ struct AssetsView: View {
     @EnvironmentObject var store: LedgerStore
     @State private var presented: AssetAccount?
     @State private var isNew = false
+    @State private var showingTransfer = false
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
-                PageHeader(title: "Assets & balances", subtitle: "Cash, bank accounts, savings, investments, and property", actionTitle: "Add asset") {
+                PageHeader(
+                    title: "Assets & balances",
+                    subtitle: "Cash, accounts, investments, property, phones, and laptops",
+                    secondaryActionTitle: "Transfer money",
+                    secondaryAction: { showingTransfer = true },
+                    actionTitle: "Add asset"
+                ) {
                     isNew = true
                     presented = AssetAccount(name: "", kind: .cash, balance: 0)
                 }
@@ -440,6 +706,41 @@ struct AssetsView: View {
                         }
                     }
                 }
+
+                if !store.data.transfers.isEmpty {
+                    GroupBox("Recent transfers") {
+                        VStack(spacing: 0) {
+                            ForEach(store.data.transfers.sorted { $0.date > $1.date }.prefix(8)) { transfer in
+                                HStack(spacing: 12) {
+                                    Image(systemName: "arrow.left.arrow.right.circle.fill")
+                                        .font(.title2)
+                                        .foregroundStyle(.blue)
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text("\(store.assetName(for: transfer.fromAssetID)) → \(store.assetName(for: transfer.toAssetID))")
+                                            .fontWeight(.semibold)
+                                        Text(transfer.date.formatted(date: .abbreviated, time: .omitted))
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    Text(store.currency(transfer.amount)).fontWeight(.semibold)
+                                    Button(role: .destructive) {
+                                        store.deleteTransfer(transfer)
+                                    } label: {
+                                        Image(systemName: "trash")
+                                    }
+                                    .buttonStyle(.borderless)
+                                    .help("Delete and reverse this transfer")
+                                }
+                                .padding(.vertical, 9)
+                                if transfer.id != store.data.transfers.sorted(by: { $0.date > $1.date }).prefix(8).last?.id {
+                                    Divider()
+                                }
+                            }
+                        }
+                        .padding(.horizontal, 8)
+                    }
+                }
             }
             .padding(28)
         }
@@ -447,6 +748,12 @@ struct AssetsView: View {
             AssetEditor(item: item, isNew: isNew) { value in
                 if isNew { store.addAsset(value) } else { store.updateAsset(value) }
                 presented = nil
+            }
+        }
+        .sheet(isPresented: $showingTransfer) {
+            TransferEditor { transfer in
+                _ = store.addTransfer(transfer)
+                showingTransfer = false
             }
         }
     }
@@ -641,6 +948,7 @@ struct SettingsView: View {
     @EnvironmentObject var appLock: AppLockManager
     @State private var settings = LedgerSettings()
     @State private var notificationText = "Checking…"
+    @State private var notificationStatus: UNAuthorizationStatus = .notDetermined
     @State private var confirmation = ""
     @State private var passcodeAction: PasscodeAction?
 
@@ -664,16 +972,28 @@ struct SettingsView: View {
 
                 GroupBox("Payment reminders") {
                     HStack {
+                        Circle()
+                            .fill(notificationIndicatorColor)
+                            .frame(width: 11, height: 11)
+                            .accessibilityLabel(notificationIndicatorLabel)
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("Mac notifications").font(.headline)
+                            HStack(spacing: 7) {
+                                Text("Mac notifications").font(.headline)
+                                Text(notificationIndicatorLabel)
+                                    .font(.caption.bold())
+                                    .foregroundStyle(notificationIndicatorColor)
+                                    .padding(.horizontal, 7)
+                                    .padding(.vertical, 2)
+                                    .background(notificationIndicatorColor.opacity(0.12), in: Capsule())
+                            }
                             Text(notificationText).foregroundStyle(.secondary)
                         }
                         Spacer()
                         Button("Enable notifications") {
                             Task {
                                 let granted = await NotificationManager.shared.requestPermission()
-                                notificationText = granted ? "Enabled. Upcoming reminders are scheduled locally." : "Not enabled. You can allow notifications in System Settings."
                                 if granted { NotificationManager.shared.reschedule(from: store.data) }
+                                await refreshNotificationStatus()
                             }
                         }
                     }
@@ -742,19 +1062,44 @@ struct SettingsView: View {
         }
         .onAppear {
             settings = store.data.settings
-            Task {
-                let status = await NotificationManager.shared.status()
-                switch status {
-                case .authorized, .provisional, .ephemeral: notificationText = "Enabled. Upcoming reminders are scheduled locally."
-                case .denied: notificationText = "Disabled in System Settings."
-                case .notDetermined: notificationText = "Not enabled yet."
-                @unknown default: notificationText = "Notification status is unavailable."
-                }
-            }
+            Task { await refreshNotificationStatus() }
         }
         .sheet(item: $passcodeAction) { action in
             PasscodeEditorSheet(action: action)
                 .environmentObject(appLock)
+        }
+    }
+
+    private var notificationIndicatorColor: Color {
+        switch notificationStatus {
+        case .authorized, .provisional, .ephemeral: return .green
+        case .denied: return .red
+        case .notDetermined: return .orange
+        @unknown default: return .gray
+        }
+    }
+
+    private var notificationIndicatorLabel: String {
+        switch notificationStatus {
+        case .authorized, .provisional, .ephemeral: return "On"
+        case .denied: return "Off"
+        case .notDetermined: return "Not set"
+        @unknown default: return "Unknown"
+        }
+    }
+
+    private func refreshNotificationStatus() async {
+        let status = await NotificationManager.shared.status()
+        notificationStatus = status
+        switch status {
+        case .authorized, .provisional, .ephemeral:
+            notificationText = "Enabled. Payment and free-trial reminders are scheduled locally."
+        case .denied:
+            notificationText = "Disabled in System Settings."
+        case .notDetermined:
+            notificationText = "Not enabled yet."
+        @unknown default:
+            notificationText = "Notification status is unavailable."
         }
     }
 
@@ -905,6 +1250,18 @@ struct SubscriptionEditor: View {
                 }
                 DatePicker("Next due date", selection: $item.nextDueDate, displayedComponents: .date)
                 Stepper("Remind \(item.reminderDays) day\(item.reminderDays == 1 ? "" : "s") before", value: $item.reminderDays, in: 0...30)
+                Toggle("This subscription has a free trial", isOn: trialEnabled)
+                if item.trialEndDate != nil {
+                    DatePicker("Free trial ends", selection: trialEndDate, displayedComponents: .date)
+                    Stepper(
+                        "Remind to cancel \(trialReminderDays.wrappedValue) day\(trialReminderDays.wrappedValue == 1 ? "" : "s") before",
+                        value: trialReminderDays,
+                        in: 0...30
+                    )
+                    Text("Pocket Ledger will send a separate cancellation reminder before the trial converts to a paid subscription.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 Picker("Pay from", selection: $item.assetID) {
                     Text("Do not update a balance").tag(UUID?.none)
                     ForEach(store.data.assets) { Text($0.name).tag(Optional($0.id)) }
@@ -912,6 +1269,171 @@ struct SubscriptionEditor: View {
                 Toggle("Active subscription", isOn: $item.isActive)
                 TextField("Notes (optional)", text: $item.notes, axis: .vertical)
             }
+        }
+    }
+
+    private var trialEnabled: Binding<Bool> {
+        Binding(
+            get: { item.trialEndDate != nil },
+            set: { enabled in
+                if enabled {
+                    item.trialEndDate = Calendar.current.date(byAdding: .day, value: 7, to: Date()) ?? Date()
+                    item.trialReminderDays = 2
+                } else {
+                    item.trialEndDate = nil
+                    item.trialReminderDays = nil
+                }
+            }
+        )
+    }
+
+    private var trialEndDate: Binding<Date> {
+        Binding(
+            get: { item.trialEndDate ?? Date() },
+            set: { item.trialEndDate = $0 }
+        )
+    }
+
+    private var trialReminderDays: Binding<Int> {
+        Binding(
+            get: { item.trialReminderDays ?? 2 },
+            set: { item.trialReminderDays = $0 }
+        )
+    }
+}
+
+private enum SubscriptionPaymentChoice: String, CaseIterable, Identifiable {
+    case scheduled = "Scheduled amount"
+    case different = "Different amount"
+    var id: String { rawValue }
+}
+
+struct SubscriptionPaymentSheet: View {
+    @EnvironmentObject var store: LedgerStore
+    @Environment(\.dismiss) var dismiss
+    let subscription: SubscriptionEntry
+    let onSave: (Double) -> Void
+    @State private var choice: SubscriptionPaymentChoice = .scheduled
+    @State private var customAmount: Double = 0
+
+    private var paymentAmount: Double {
+        choice == .scheduled ? subscription.amount : customAmount
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Record subscription payment").font(.title2.bold())
+                Text("Confirm the amount charged for \(subscription.name). The scheduled amount is \(store.currency(subscription.amount)).")
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(22)
+            Divider()
+
+            VStack(alignment: .leading, spacing: 18) {
+                Picker("Amount paid", selection: $choice) {
+                    ForEach(SubscriptionPaymentChoice.allCases) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.radioGroup)
+
+                if choice == .different {
+                    TextField(
+                        "Actual amount paid",
+                        value: $customAmount,
+                        format: .number.precision(.fractionLength(0...2))
+                    )
+                    Text("Use the final amount charged by your bank—for example, when currency conversion changes the price.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Label(
+                    "This will add a subscription expense, update the linked asset balance, and move the next due date forward.",
+                    systemImage: "info.circle"
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+            .padding(22)
+            Divider()
+
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Record payment") {
+                    onSave(paymentAmount)
+                    dismiss()
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+                .disabled(paymentAmount <= 0)
+            }
+            .padding(18)
+        }
+        .frame(width: 540)
+        .onAppear { customAmount = subscription.amount }
+    }
+}
+
+struct TransferEditor: View {
+    @EnvironmentObject var store: LedgerStore
+    @Environment(\.dismiss) var dismiss
+    let onSave: (AssetTransfer) -> Void
+    @State private var amount: Double = 0
+    @State private var date = Date()
+    @State private var fromAssetID: UUID?
+    @State private var toAssetID: UUID?
+    @State private var notes = ""
+
+    private var canSave: Bool {
+        amount > 0 && fromAssetID != nil && toAssetID != nil && fromAssetID != toAssetID
+    }
+
+    var body: some View {
+        EditorContainer(
+            title: "Transfer between assets",
+            canSave: canSave,
+            onCancel: { dismiss() },
+            onSave: {
+                guard let fromAssetID, let toAssetID else { return }
+                onSave(AssetTransfer(
+                    amount: amount,
+                    date: date,
+                    fromAssetID: fromAssetID,
+                    toAssetID: toAssetID,
+                    notes: notes
+                ))
+                dismiss()
+            }
+        ) {
+            Form {
+                if store.data.assets.count < 2 {
+                    Label("Add at least two assets before recording a transfer.", systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                }
+                TextField("Amount", value: $amount, format: .number.precision(.fractionLength(0...2)))
+                DatePicker("Date", selection: $date, displayedComponents: .date)
+                Picker("Move money from", selection: $fromAssetID) {
+                    Text("Choose an asset").tag(UUID?.none)
+                    ForEach(store.data.assets) { Text($0.name).tag(Optional($0.id)) }
+                }
+                Picker("Move money to", selection: $toAssetID) {
+                    Text("Choose an asset").tag(UUID?.none)
+                    ForEach(store.data.assets) { Text($0.name).tag(Optional($0.id)) }
+                }
+                if fromAssetID != nil && fromAssetID == toAssetID {
+                    Text("Choose two different assets.").font(.caption).foregroundStyle(.red)
+                }
+                TextField("Notes (optional)", text: $notes, axis: .vertical)
+                Text("Transfers change both balances but are not counted as income or expenses.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .onAppear {
+            fromAssetID = store.data.assets.first?.id
+            toAssetID = store.data.assets.dropFirst().first?.id
         }
     }
 }

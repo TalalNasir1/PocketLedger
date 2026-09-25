@@ -27,6 +27,30 @@ final class NotificationManager {
         center.removeAllPendingNotificationRequests()
         var requestCount = 0
         for subscription in data.subscriptions.filter(\.isActive).sorted(by: { $0.nextDueDate < $1.nextDueDate }) {
+            if let trialEndDate = subscription.trialEndDate, trialEndDate > Date(), requestCount < 60 {
+                let days = max(subscription.trialReminderDays ?? 2, 0)
+                let reminder = Calendar.current.date(byAdding: .day, value: -days, to: trialEndDate) ?? trialEndDate
+                var scheduledDate = reminder
+                if scheduledDate <= Date() { scheduledDate = Date().addingTimeInterval(5) }
+                var trialComponents = Calendar.current.dateComponents([.year, .month, .day], from: scheduledDate)
+                trialComponents.hour = data.settings.reminderHour
+                trialComponents.minute = 0
+                if scheduledDate.timeIntervalSinceNow < 60 {
+                    trialComponents = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute, .second], from: scheduledDate)
+                }
+                if let scheduled = Calendar.current.date(from: trialComponents), scheduled > Date() {
+                    let content = UNMutableNotificationContent()
+                    content.title = "Free trial ending soon"
+                    content.body = "\(subscription.name) ends on \(trialEndDate.formatted(date: .abbreviated, time: .omitted)). Cancel before then if you do not want the paid plan to begin."
+                    content.sound = .default
+                    center.add(UNNotificationRequest(
+                        identifier: "trial-\(subscription.id.uuidString)",
+                        content: content,
+                        trigger: UNCalendarNotificationTrigger(dateMatching: trialComponents, repeats: false)
+                    ))
+                    requestCount += 1
+                }
+            }
             var dueDate = subscription.nextDueDate
             let today = Calendar.current.startOfDay(for: Date())
             while dueDate < today { dueDate = subscription.dateAfter(dueDate) }

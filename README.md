@@ -6,12 +6,15 @@ Pocket Ledger is a private, offline personal finance app for macOS. It tracks su
 
 ## Features
 
-- Home dashboard with current assets, monthly spending, income, net cash flow, and charts
-- Subscription due dates, recurring-cost estimates, local Mac notifications, and “Record paid” actions
+- Home dashboard with current assets hidden by default, monthly/yearly spending views, and interactive category charts
+- Subscription due dates, variable payment recording, free-trial cancellation reminders, and local Mac notifications
 - Expenses grouped into categories such as food, online shopping, transport, and bills
+- Month, year, and all-time filters for both expenses and income
 - Salary, pocket money, freelance income, gifts, and other money received
-- Cash, bank, savings, investment, property, and other asset balances
+- Cash, bank, savings, investment, property, phone, laptop, and other asset balances
+- Account-to-account transfers that update both balances without counting as spending or income
 - Automatic balance updates when income or expenses are linked to an account
+- Clear notification status indicator in Settings
 - Optional four-digit app lock with secure Keychain storage and Touch ID unlock
 - Immediate local saving, up to 30 automatic backups, manual backup/restore, and CSV export
 - No login, server, analytics, advertisements, or internet connection

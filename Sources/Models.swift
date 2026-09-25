@@ -15,6 +15,8 @@ enum AssetKind: String, Codable, CaseIterable, Identifiable {
     case savings = "Savings"
     case investment = "Investment"
     case property = "Property"
+    case phone = "Phone"
+    case laptop = "Laptop"
     case other = "Other"
 
     var id: String { rawValue }
@@ -25,6 +27,8 @@ enum AssetKind: String, Codable, CaseIterable, Identifiable {
         case .savings: return "dollarsign.circle.fill"
         case .investment: return "chart.line.uptrend.xyaxis"
         case .property: return "house.fill"
+        case .phone: return "iphone"
+        case .laptop: return "laptopcomputer"
         case .other: return "shippingbox.fill"
         }
     }
@@ -62,6 +66,15 @@ struct IncomeEntry: Identifiable, Codable, Hashable {
     var notes: String = ""
 }
 
+struct AssetTransfer: Identifiable, Codable, Hashable {
+    var id = UUID()
+    var amount: Double
+    var date: Date
+    var fromAssetID: UUID
+    var toAssetID: UUID
+    var notes: String = ""
+}
+
 struct SubscriptionEntry: Identifiable, Codable, Hashable {
     var id = UUID()
     var name: String
@@ -73,6 +86,8 @@ struct SubscriptionEntry: Identifiable, Codable, Hashable {
     var assetID: UUID?
     var isActive: Bool = true
     var notes: String = ""
+    var trialEndDate: Date?
+    var trialReminderDays: Int?
 
     func monthlyEquivalent() -> Double {
         switch cycle {
@@ -106,9 +121,38 @@ struct LedgerData: Codable {
     var assets: [AssetAccount] = []
     var expenses: [ExpenseEntry] = []
     var income: [IncomeEntry] = []
+    var transfers: [AssetTransfer] = []
     var subscriptions: [SubscriptionEntry] = []
     var settings = LedgerSettings()
     var lastBackupDate: Date?
+
+    private enum CodingKeys: String, CodingKey {
+        case assets, expenses, income, transfers, subscriptions, settings, lastBackupDate
+    }
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        assets = try container.decodeIfPresent([AssetAccount].self, forKey: .assets) ?? []
+        expenses = try container.decodeIfPresent([ExpenseEntry].self, forKey: .expenses) ?? []
+        income = try container.decodeIfPresent([IncomeEntry].self, forKey: .income) ?? []
+        transfers = try container.decodeIfPresent([AssetTransfer].self, forKey: .transfers) ?? []
+        subscriptions = try container.decodeIfPresent([SubscriptionEntry].self, forKey: .subscriptions) ?? []
+        settings = try container.decodeIfPresent(LedgerSettings.self, forKey: .settings) ?? LedgerSettings()
+        lastBackupDate = try container.decodeIfPresent(Date.self, forKey: .lastBackupDate)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(assets, forKey: .assets)
+        try container.encode(expenses, forKey: .expenses)
+        try container.encode(income, forKey: .income)
+        try container.encode(transfers, forKey: .transfers)
+        try container.encode(subscriptions, forKey: .subscriptions)
+        try container.encode(settings, forKey: .settings)
+        try container.encodeIfPresent(lastBackupDate, forKey: .lastBackupDate)
+    }
 }
 
 extension Date {
@@ -119,5 +163,13 @@ extension Date {
     var endOfMonth: Date {
         let start = startOfMonth
         return Calendar.current.date(byAdding: DateComponents(month: 1, second: -1), to: start) ?? self
+    }
+
+    var startOfYear: Date {
+        Calendar.current.date(from: Calendar.current.dateComponents([.year], from: self)) ?? self
+    }
+
+    var endOfYear: Date {
+        Calendar.current.date(byAdding: DateComponents(year: 1, second: -1), to: startOfYear) ?? self
     }
 }

@@ -48,6 +48,10 @@ The app saves its database and backups inside:
 
 Backups can be opened, created, restored, and exported from the app’s **Settings & backup** page.
 
+## App lock and Touch ID
+
+Open **Settings & backup → App lock** to create a four-digit passcode. When Touch ID is configured on the Mac, it can unlock Pocket Ledger without typing the code. The app locks on launch and whenever you switch away from it. The salted passcode verifier is stored in macOS Keychain and never written to the ledger data file.
+
 ## Privacy
 
 Pocket Ledger has no networking code. It does not use a cloud service, collect analytics, or transmit financial information.

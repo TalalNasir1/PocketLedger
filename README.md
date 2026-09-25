@@ -2,6 +2,8 @@
 
 Pocket Ledger is a private, offline personal finance app for macOS. It tracks subscriptions, everyday expenses, income, current balances, and other assets. All records stay on the Mac.
 
+![Pocket Ledger dashboard](Screenshots/Pocket-Ledger-dashboard.png)
+
 ## Features
 
 - Home dashboard with current assets, monthly spending, income, net cash flow, and charts
